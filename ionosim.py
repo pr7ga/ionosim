@@ -4,12 +4,12 @@ import matplotlib.pyplot as plt
 
 # Configuração da página e layout
 st.set_page_config(
-    page_title="Simulador Skywave HF - QTC da ECRA",
+    page_title="Simulador Skywave HF Físico - QTC da ECRA",
     page_icon="📻",
     layout="wide"
 )
 
-# Estilização personalizada para o rodapé fixo
+# Estilização do rodapé fixo
 st.markdown("""
     <style>
     .footer {
@@ -28,162 +28,160 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Título Principal
-st.title("Simulador de Propagação Ionosférica (Skywave)")
-st.markdown("Explore o comportamento das ondas de rádio em HF através da refração nas camadas ionosféricas.")
+st.title("Simulador Físico de Propagação Ionosférica")
+st.markdown("Modelo avançado com perfis Gaussianos de densidade de elétrons e absorção da Camada D.")
 
-# --- BARRA LATERAL: Explicações Técnicas e Fundamentos ---
-st.sidebar.header("📚 Fundamentos Teóricos")
+# --- BARRA LATERAL: Fundamentos Teóricos ---
+st.sidebar.header("📚 Modelo Físico")
 st.sidebar.markdown("""
-**Mecânica da Onda Celeste (*Skywave*)**
-As ondas de rádio na faixa de HF (3 a 30 MHz) não se propagam em linha reta além do horizonte devido à curvatura da Terra. Em vez disso, dependem da **ionosfera** para cobrir longas distâncias (DX).
+**Densidade de Elétrons Contínua**
+A refração não ocorre abruptamente. Modelamos as camadas como distribuições Gaussianas, onde o raio é continuamente curvado pela derivada espacial do quadrado da frequência de plasma ($f_p^2$).
 
-**Lei da Secante e a MUF**
-A Frequência Máxima Utilizável (MUF) para um determinado enlace depende da frequência crítica da camada ($f_c$) e do ângulo de elevação da antena ($\alpha$), seguindo uma aproximação baseada na Lei da Secante:
-$$MUF = \\frac{f_c}{\\sin(\\alpha)}$$
-
-* **Frequências abaixo da MUF:** Sofrem refração suficiente e retornam à Terra.
-* **Frequências acima da MUF:** Superam a densidade eletrônica da camada, "furam" a ionosfera e escapam para o espaço.
-* **Ângulos Baixos:** Aumentam o caminho da onda dentro da camada, facilitando a refração e aumentando a distância do salto.
+**A Camada D e a Absorção**
+Presente apenas durante o dia (60-90 km), a camada D possui alta pressão atmosférica. Os elétrons excitados pelas ondas de rádio colidem com moléculas neutras, dissipando a energia do sinal como calor. 
+A atenuação obedece à relação fundamental:
+$$L_{dB} \\propto \\frac{1}{f^2}$$
+*Ondas de frequências mais baixas (ex: 3.5 MHz) perdem muito mais energia na camada D do que ondas de frequências mais altas (ex: 28 MHz).*
 """)
-
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🎛️ Painel de Controlo")
 
-# --- LAYOUT PRINCIPAL: Parâmetros e Gráfico ---
+# --- LAYOUT PRINCIPAL: Parâmetros ---
 col1, col2 = st.columns([1, 2.5])
 
 with col1:
     st.markdown("### Parâmetros de Transmissão")
-    freq = st.slider(
-        "Frequência de Operação (MHz)", 
-        1.0, 30.0, 7.0, 0.5,
-        help="Ajuste a frequência do transceptor. Bandas mais baixas refratam com mais facilidade."
-    )
-    angle = st.slider(
-        "Ângulo de Elevação da Antena (Graus)", 
-        10, 89, 30, 1,
-        help="Ângulos altos favorecem comunicações locais (NVIS). Ângulos baixos são usados para DX."
-    )
-    cond = st.selectbox(
-        "Condição da Ionosfera", 
-        ["Dia (Alta Ionização)", "Noite (Baixa Ionização)"]
-    )
+    freq = st.slider("Frequência de Operação (MHz)", 1.0, 30.0, 7.0, 0.5)
+    angle = st.slider("Ângulo de Elevação da Antena (Graus)", 10, 89, 30, 1)
+    cond = st.selectbox("Condição da Ionosfera", ["Dia (Alta Ionização)", "Noite (Baixa Ionização)"])
 
-    # Definição das frequências críticas com base na física do plasma ionosférico
+    # Parâmetros das Camadas (Altura h e Espessura w em km, Frequência Crítica fc em MHz)
+    h_D, w_D = 75.0, 15.0
+    h_E, w_E = 110.0, 20.0
+    h_F, w_F = 300.0, 70.0
+
     if cond == "Dia (Alta Ionização)":
-        fc_F = 9.5
         fc_E = 3.5
+        fc_F = 9.5
+        fator_absorcao_D = 15.0  # Fator multiplicador de perda na Camada D
     else:
+        fc_E = 0.5  # Recombinação quase total
         fc_F = 4.5
-        fc_E = 0.0  # A camada E recombinou-se e desapareceu quase por completo
+        fator_absorcao_D = 0.0   # Camada D desaparece à noite
 
-    # Cálculo da MUF aproximada para a camada F
     angle_rad = np.radians(angle)
     muf_estimada = fc_F / np.sin(angle_rad)
 
     st.markdown("---")
-    st.metric(label="MUF Estimada (Camada F)", value=f"{muf_estimada:.2f} MHz")
-    
-    if freq > muf_estimada:
-        st.error("⚠️ Alerta: Frequência acima da MUF. O sinal irá escapar para o espaço.")
-    else:
-        st.success("✅ Sinal refratável: Condição favorável para retorno à Terra.")
+    st.metric(label="MUF Estimada (Aprox.)", value=f"{muf_estimada:.2f} MHz")
 
-# --- MOTOR DE SIMULAÇÃO (Ray Tracing Numérico) ---
+# --- MOTOR DE SIMULAÇÃO (Integração Numérica Constante) ---
 x, y = 0.0, 0.0
 vx = np.cos(angle_rad)
 vy = np.sin(angle_rad)
-dt = 0.6  # Passo da resolução espacial
+dt = 0.5  # Resolução espacial da integração (km)
 
 x_vals, y_vals = [x], [y]
 escapou = False
+atenuacao_D_dB = 0.0
+distancia_total_percorrida = 0.0
 
-# Simulação do trajeto do raio
 while y >= 0 and x <= 4500:
-    aceleracao_v = 0.0
-    
-    # Interação com a Camada F (250 a 350 km)
-    if 250 <= y <= 350:
-        aceleracao_v = (fc_F / freq)**2 / (2 * 100.0)
-        
-    # Interação com a Camada E (100 a 120 km)
-    elif 100 <= y <= 120 and fc_E > 0:
-        aceleracao_v = (fc_E / freq)**2 / (2 * 20.0)
+    # 1. Absorção da Camada D (60km a 90km)
+    if 60 <= y <= 90 and fator_absorcao_D > 0:
+        # A perda aumenta com a densidade da camada e o tempo gasto nela, caindo com f^2
+        atenuacao_D_dB += (fator_absorcao_D / (freq**2)) * dt
 
-    # Aplicação do efeito gradiente do índice de refração (curvando para baixo)
+    # 2. Refração Contínua (Derivada do perfil de densidade - Lei de Snell diferencial)
+    # dfp2_dy representa o gradiente vertical do quadrado da frequência de plasma
+    dfp2_dy = (
+        (fc_E**2) * (-2 * (y - h_E) / (w_E**2)) * np.exp(-((y - h_E) / w_E)**2) +
+        (fc_F**2) * (-2 * (y - h_F) / (w_F**2)) * np.exp(-((y - h_F) / w_F)**2)
+    )
+    
+    # A aceleração de refração empurra a onda baseada no gradiente de plasma
+    aceleracao_v = (1.0 / (2.0 * freq**2)) * dfp2_dy
     vy -= aceleracao_v * dt
     
+    # 3. Atualização Cinemática
     x += vx * dt
     y += vy * dt
+    distancia_total_percorrida += dt
 
     x_vals.append(x)
     y_vals.append(y)
 
-    if y > 420:
+    # Condição de escape (ultrapassou o pico da camada F significativamente)
+    if y > 450:
         escapou = True
         break
+
+# --- CÁLCULO DE PERDAS NO ENLACE (Link Budget Básico) ---
+if not escapou:
+    # Free Space Path Loss (FSPL) simplificado
+    fspl_dB = 32.44 + 20 * np.log10(freq) + 20 * np.log10(distancia_total_percorrida)
+    perda_total = fspl_dB + atenuacao_D_dB
+else:
+    perda_total = float('inf')
 
 # --- RENDERIZAÇÃO DO GRÁFICO ---
 with col2:
     fig, ax = plt.subplots(figsize=(11, 5.5))
     
-    # Desenho das Camadas Ionosféricas
-    if fc_E > 0:
-        ax.axhspan(100, 120, color='#f4d03f', alpha=0.25, label='Camada E (100-120 km)')
-    ax.axhspan(250, 350, color='#eb984e', alpha=0.35, label='Camada F (250-350 km)')
+    # Desenho das Camadas Ionosféricas (Gradientes Visuais)
+    if fator_absorcao_D > 0:
+        ax.axhspan(60, 90, color='#7f8c8d', alpha=0.3, label='Camada D (Absorção)')
+    if fc_E > 1.0:
+        ax.axhspan(90, 130, color='#f4d03f', alpha=0.2, label='Camada E')
     
-    # Solo (Linha da Terra)
-    ax.axhline(0, color='grey', linestyle='-', alpha=0.5)
+    # A camada F é mais larga e difusa
+    ax.axhspan(220, 380, color='#eb984e', alpha=0.25, label='Camada F (Refração Principal)')
+    
+    ax.axhline(0, color='#2c3e50', linestyle='-', linewidth=2)
 
-    # Plotagem da Trajetória
-    cor_linha = '#e74c3c' if not escapou else '#7f8c8d'
-    estilo_linha = '-' if not escapou else '--'
-    ax.plot(x_vals, y_vals, color=cor_linha, linestyle=estilo_linha, linewidth=2.5, label=f'Raio de Onda ({freq} MHz)')
-
-    # Marcador do Transmissor (Estação Base)
-    ax.plot(0, 0, marker='^', color='#2c3e50', markersize=11, label="Transmissor (Tx)")
+    cor_linha = '#e74c3c' if not escapou else '#95a5a6'
+    estilo_linha = '-' if not escapou else '-.'
+    ax.plot(x_vals, y_vals, color=cor_linha, linestyle=estilo_linha, linewidth=2, label=f'Onda ({freq} MHz)')
+    ax.plot(0, 0, marker='^', color='#2c3e50', markersize=10, label="Tx")
 
     if not escapou:
         distancia_salto = x_vals[-1]
-        # Marcador do Ponto de Queda/Recepção
-        ax.plot(distancia_salto, 0, marker='v', color='#2980b9', markersize=11, label=f"Receptor (Rx)")
+        ax.plot(distancia_salto, 0, marker='v', color='#2980b9', markersize=10, label=f"Rx")
         
-        # Seta indicativa da Distância do Salto
         ax.annotate(
-            f'Distância do Salto:\n{distancia_salto:.0f} km',
+            f'Distância:\n{distancia_salto:.0f} km',
             xy=(distancia_salto, 0), xytext=(distancia_salto, 70),
-            arrowprops=dict(facecolor='#2c3e50', shrink=0.08, width=1, headwidth=6),
-            ha='center', fontsize=10, fontweight='bold'
+            arrowprops=dict(facecolor='#2c3e50', shrink=0.05, width=1, headwidth=5),
+            ha='center', fontsize=9, fontweight='bold'
         )
-        
-        # Delimitação visual da Skip Zone
-        ax.axvspan(0, distancia_salto, ymax=0.04, color='#c0392b', alpha=0.1)
-        ax.text(distancia_salto/2, 12, 'Zona de Silêncio (Skip Zone)', ha='center', color='#962d22', fontsize=9.5, style='italic')
+        ax.axvspan(0, distancia_salto, ymax=0.03, color='#c0392b', alpha=0.1)
     else:
-        # Indicação visual de escape espacial
-        ax.text(x_vals[-1]*0.8, 390, 'Escape Espacial', color='#7f8c8d', fontsize=10, rotation=angle*0.6)
+        ax.text(x_vals[-1]*0.8, 410, 'Onda Perfurou a Ionosfera', color='#7f8c8d', fontsize=10, rotation=angle*0.5)
 
-    # Configurações de eixos e moldura
     limite_x = max(1600, min(x_vals[-1] + 200 if not escapou else 1600, 4500))
     ax.set_xlim(0, limite_x)
-    ax.set_ylim(0, 430)
-    ax.set_xlabel("Distância de Solo (km)", fontsize=11)
-    ax.set_ylabel("Altitude (km)", fontsize=11)
+    ax.set_ylim(0, 450)
+    ax.set_xlabel("Distância de Solo (km)")
+    ax.set_ylabel("Altitude (km)")
     ax.grid(True, linestyle=':', alpha=0.5)
-    ax.legend(loc='upper right', frameon=True, facecolor='#ffffff', edgecolor='#e2e2e2')
+    ax.legend(loc='upper right', framealpha=0.9)
     
-    # Envia o gráfico pronto para o ecrã do Streamlit
     st.pyplot(fig)
 
-    # Resumo dinâmico de texto abaixo do gráfico
+    # Painel de Resultados Técnicos
     if not escapou:
-        st.info(f"ℹ️ **Análise de Enlace:** O sinal emitido a {angle}° refratou com sucesso na ionosfera e retornou à superfície. A área iluminada pelo primeiro salto encontra-se a **{distancia_salto:.0f} km** da estação transmissora.")
+        st.success(f"**Enlace Estabelecido!** O sinal atingiu o solo a **{distancia_salto:.0f} km**.")
+        st.info(f"**Balanço do Enlace (Estimativa):**\n"
+                f"* Atenuação por Absorção (Camada D): **{atenuacao_D_dB:.1f} dB**\n"
+                f"* Atenuação de Espaço Livre (FSPL): **{fspl_dB:.1f} dB**\n"
+                f"* Perda Total de Percurso: **{perda_total:.1f} dB**")
+        
+        if atenuacao_D_dB > 30:
+            st.warning("⚠️ **Alta Atenuação na Camada D!** Embora a trajetória retorne à Terra, o sinal sofreu absorção extrema. Na prática da estação, este sinal pode estar inaudível abaixo do ruído de fundo (QRM/QRN).")
     else:
-        st.warning("ℹ️ **Análise de Enlace:** A densidade eletrônica atual da ionosfera é insuficiente para curvar uma onda de rádio de frequência tão elevada neste ângulo. O sinal perfurou as camadas e seguiu para o espaço exterior.")
+        st.error("**Falha no Enlace:** A frequência de operação excede o limite refrativo do gradiente de plasma para este ângulo de irradiação.")
 
-# --- RODAPÉ DE CRÉDITOS ---
+# --- RODAPÉ OFICIAL ---
 st.markdown(
-    '<div class="footer">Simulador de Propagação Ionosférica HF | Desenvolvido por Alisson, PR7GA | Colaboração: QTC da ECRA</div>', 
+    '<div class="footer">Simulador Físico de Propagação Ionosférica | Desenvolvido por Alisson, PR7GA | QTC da ECRA</div>', 
     unsafe_allow_html=True
 )
