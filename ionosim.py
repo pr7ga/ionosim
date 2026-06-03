@@ -31,19 +31,19 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Simulador Físico de Propagação Ionosférica")
-st.markdown("Modelo contínuo com atenuação visual na Camada D e limites físicos de contorno corrigidos.")
+st.markdown("Modelo contínuo com atenuação na Camada D e ajuste de densidade de plasma por MUF dinâmica.")
 
 # --- BARRA LATERAL ---
 st.sidebar.header("📚 Modelo Físico")
 st.sidebar.markdown("""
 **A Camada D e o "Blackout"**
-A atenuação diurna da camada D (60-90 km) é inversamente proporcional ao quadrado da frequência. Sinais de baixa frequência (ex: 160m e 80m) perdem enorme quantidade de energia ao aquecer os elétrons desta camada densa. Ângulos baixos agravam a perda, pois a onda percorre um trajeto físico maior dentro da região de absorção. Quando a atenuação é total, o sinal simplesmente desaparece antes de ser refratado.
+A atenuação diurna da camada D (60-90 km) é inversamente proporcional ao quadrado da frequência. Sinais de baixa frequência (ex: 160m e 80m) perdem enorme quantidade de energia. Quando a atenuação é total, o sinal desaparece antes de ser refratado.
 
 **Camadas F1 e F2**
-Durante o dia, a intensa radiação divide a camada F em F1 e F2. À noite, elas se fundem e a camada D se dissipa, abrindo as bandas baixas para longa distância no vácuo noturno.
+Durante o dia, a intensa radiação divide a camada F em F1 e F2. À noite, elas se fundem e a camada D se dissipa.
 
-**A Banda Mágica (6 metros / 50 MHz)**
-Ao utilizar frequências acima de 30 MHz, a onda entra no espectro de VHF. A energia é alta demais para ser curvada pela densidade eletrônica normal, fazendo o sinal perfurar a ionosfera e escapar para o espaço na maioria das vezes.
+**Modo de MUF Informada**
+Ao invés de usar os valores padrão de densidade da ionosfera, você pode inserir a MUF observada em dados reais (ionossondas). O simulador fará a retroengenharia do gradiente de plasma, ajustando as frequências críticas ($f_c$) de todas as camadas para que o modelo físico reflita exatamente as condições do momento.
 """)
 st.sidebar.markdown("---")
 
@@ -52,7 +52,6 @@ col1, col2 = st.columns([1, 2.5])
 
 with col1:
     st.markdown("### Parâmetros de Transmissão")
-    # Limite superior alterado para 54.0 MHz
     freq = st.slider("Frequência de Operação (MHz)", 1.0, 54.0, 7.0, 0.5, help="Abrange de 160m (MF) até 6m (VHF)")
     angle = st.slider("Ângulo de Elevação da Antena (Graus)", 10, 89, 13, 1)
     cond = st.selectbox("Condição da Ionosfera", ["Dia (Alta Ionização)", "Noite (Baixa Ionização)"])
@@ -61,22 +60,44 @@ with col1:
     h_F1, w_F1 = 180.0, 30.0
     h_F2, w_F2 = 300.0, 60.0
 
+    # Valores base da física do modelo
     if cond == "Dia (Alta Ionização)":
-        fc_E = 3.5
-        fc_F1 = 5.5
-        fc_F2 = 9.5
+        fc_E_base = 3.5
+        fc_F1_base = 5.5
+        fc_F2_base = 9.5
         fator_absorcao_D = 15.0
     else:
-        fc_E = 0.0
-        fc_F1 = 0.0
-        fc_F2 = 4.5
+        fc_E_base = 0.0
+        fc_F1_base = 0.0
+        fc_F2_base = 4.5
         fator_absorcao_D = 0.0
 
     angle_rad = np.radians(angle)
-    muf_estimada = fc_F2 / np.sin(angle_rad)
+    muf_base = fc_F2_base / np.sin(angle_rad)
 
     st.markdown("---")
-    st.metric(label="MUF Estimada (F2)", value=f"{muf_estimada:.2f} MHz")
+    st.markdown("### Modelo de Ionização (MUF)")
+    modo_muf = st.radio("Fonte dos dados de densidade da Ionosfera:", 
+                        ["Calculada pelo Modelo Teórico", "Informada pelo Usuário (Dados Reais)"])
+
+    if modo_muf == "Calculada pelo Modelo Teórico":
+        fc_E, fc_F1, fc_F2 = fc_E_base, fc_F1_base, fc_F2_base
+        muf_estimada = muf_base
+        st.metric(label="MUF Resultante (F2)", value=f"{muf_estimada:.2f} MHz")
+    else:
+        # Modo Personalizado
+        muf_usuario = st.number_input("Informe a MUF atual (MHz):", min_value=1.0, max_value=100.0, value=round(muf_base, 1), step=0.5)
+        muf_estimada = muf_usuario
+        
+        # Fator de escala: O quanto a ionosfera real está mais forte/fraca que o modelo teórico
+        fator_escala = muf_usuario / muf_base
+        
+        # Redimensionando a ionosfera
+        fc_E = fc_E_base * fator_escala
+        fc_F1 = fc_F1_base * fator_escala
+        fc_F2 = fc_F2_base * fator_escala
+        
+        st.info(f"O modelo de plasma foi redimensionado. A frequência crítica do pico da Camada F2 ($f_c$) foi ajustada internamente para **{fc_F2:.2f} MHz** para obedecer à sua MUF informada.")
 
 # --- MOTOR DE SIMULAÇÃO (Integração Numérica) ---
 x, y = 0.0, 0.0
@@ -88,16 +109,14 @@ x_vals, y_vals, alpha_vals = [x], [y], [1.0]
 escapou = False
 absorvido = False
 atenuacao_D_dB = 0.0
-LIMITE_ABSORCAO_DB = 40.0  # dB de perda na camada D considerados como absorção total
+LIMITE_ABSORCAO_DB = 40.0  # dB de perda na camada D para absorção total
 
 while y >= 0 and x <= 4500:
-    # 1. Absorção da Camada D (Cálculo real de perda baseada na distância percorrida)
+    # 1. Absorção da Camada D
     if 60 <= y <= 90 and fator_absorcao_D > 0:
         atenuacao_D_dB += (fator_absorcao_D / (freq**2)) * dt
 
-    # Mapeia a perda em dB para opacidade visual (1.0 = perfeito, 0.0 = invisível)
     alpha_atual = max(0.0, 1.0 - (atenuacao_D_dB / LIMITE_ABSORCAO_DB))
-    
     if alpha_atual <= 0.0:
         absorvido = True
         break
@@ -148,7 +167,7 @@ with col2:
     ax.axhline(0, color='#2c3e50', linestyle='-', linewidth=2)
     ax.plot(0, 0, marker='^', color='#2c3e50', markersize=10, label="Tx")
 
-    # Preparando a linha multicolorida com opacidade dinâmica
+    # Linha com opacidade dinâmica para absorção
     points = np.array([x_vals, y_vals]).T.reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
@@ -159,13 +178,9 @@ with col2:
 
     lc = LineCollection(segments, colors=cores_segmentos, linewidths=2.5, linestyles=estilo)
     ax.add_collection(lc)
-    
-    # Plot "fantasma" apenas para a legenda funcionar corretamente
     ax.plot([], [], color=cor_base_hex, linestyle=estilo, linewidth=2.5, label=f'Onda ({freq} MHz)')
 
-    # Indicadores visuais de resultado
     if absorvido:
-        # Ponto exato onde o sinal desapareceu
         ax.plot(x_vals[-1], y_vals[-1], marker='X', color='#c0392b', markersize=8)
         ax.text(x_vals[-1]*1.05, y_vals[-1], 'Totalmente Absorvido', color='#c0392b', fontsize=10, fontweight='bold')
         st.error(f"⚠️ **Blackout por Absorção:** O sinal foi dissipado na Camada D antes de ser refletido. Atenuação superou {LIMITE_ABSORCAO_DB:.0f} dB.")
