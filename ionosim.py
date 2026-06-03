@@ -186,8 +186,6 @@ with col2:
     if absorvido:
         ax.plot(x_vals[-1], y_vals[-1], marker='X', color='#c0392b', markersize=8)
         ax.text(x_vals[-1]*1.05, y_vals[-1], 'Totalmente Absorvido', color='#c0392b', fontsize=10, fontweight='bold')
-        
-        # Mensagem de interface realocada para o topo do gráfico
         st.error(f"⚠️ **Blackout por Absorção:** O sinal foi dissipado na Camada D antes de ser refletido. Atenuação superou {LIMITE_ABSORCAO_DB:.0f} dB.")
     
     elif not escapou:
@@ -200,17 +198,23 @@ with col2:
             ha='center', fontsize=9, fontweight='bold'
         )
         ax.axvspan(0, distancia_salto, ymax=0.03, color='#c0392b', alpha=0.1)
-        
         st.success(f"✅ **Enlace Estabelecido!** Distância de salto: **{distancia_salto:.0f} km**. Perda na Camada D: **{atenuacao_D_dB:.1f} dB**.")
         
     else:
-        # Texto agora ancorado à direita da coordenada final, evitando que saia do quadro
         ax.text(x_vals[-1] - 40, 415, 'Escape Espacial', color='#7f8c8d', fontsize=10, rotation=angle*0.5, ha='right', va='center')
-        
         st.warning("ℹ️ **O sinal escapou.** Frequência acima da MUF para o ângulo atual.")
 
-    # Correção do limite do eixo X para acomodar a margem independentemente de escapar ou não
-    limite_x = max(1600, min(x_vals[-1] + 300, 4500))
+    # --- ESCALA DINÂMICA DO EIXO X ---
+    if not escapou and not absorvido:
+        # Dá uma margem de 15% após o receptor. Garante no mínimo 150 km para não colapsar o gráfico em NVIS.
+        limite_x = max(150.0, x_vals[-1] * 1.15)
+    else:
+        # Se escapou ou sumiu, adiciona 250 km de margem fixa além da última posição.
+        limite_x = max(150.0, x_vals[-1] + 250.0)
+
+    # Limite rígido máximo para não processar gráficos infinitos
+    limite_x = min(limite_x, 4500.0)
+
     ax.set_xlim(0, limite_x)
     ax.set_ylim(0, 450)
     ax.set_xlabel("Distância de Solo (km)")
@@ -218,7 +222,6 @@ with col2:
     ax.grid(True, linestyle=':', alpha=0.5)
     ax.legend(loc='upper right', framealpha=0.9, fontsize=9)
     
-    # Exibe o gráfico no Streamlit
     st.pyplot(fig)
 
 # --- RODAPÉ OFICIAL ---
