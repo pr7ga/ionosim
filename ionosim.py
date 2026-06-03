@@ -6,7 +6,7 @@ from matplotlib.collections import LineCollection
 
 # Configuração da página e layout
 st.set_page_config(
-    page_title="Simulador Skywave HF Físico - QTC da ECRA",
+    page_title="Simulador Skywave HF/VHF Físico - QTC da ECRA",
     page_icon="📻",
     layout="wide"
 )
@@ -41,6 +41,9 @@ A atenuação diurna da camada D (60-90 km) é inversamente proporcional ao quad
 
 **Camadas F1 e F2**
 Durante o dia, a intensa radiação divide a camada F em F1 e F2. À noite, elas se fundem e a camada D se dissipa, abrindo as bandas baixas para longa distância no vácuo noturno.
+
+**A Banda Mágica (6 metros / 50 MHz)**
+Ao utilizar frequências acima de 30 MHz, a onda entra no espectro de VHF. A energia é alta demais para ser curvada pela densidade eletrônica normal, fazendo o sinal perfurar a ionosfera e escapar para o espaço na maioria das vezes.
 """)
 st.sidebar.markdown("---")
 
@@ -49,7 +52,8 @@ col1, col2 = st.columns([1, 2.5])
 
 with col1:
     st.markdown("### Parâmetros de Transmissão")
-    freq = st.slider("Frequência de Operação (MHz)", 1.0, 30.0, 1.0, 0.5)
+    # Limite superior alterado para 54.0 MHz
+    freq = st.slider("Frequência de Operação (MHz)", 1.0, 54.0, 7.0, 0.5, help="Abrange de 160m (MF) até 6m (VHF)")
     angle = st.slider("Ângulo de Elevação da Antena (Graus)", 10, 89, 13, 1)
     cond = st.selectbox("Condição da Ionosfera", ["Dia (Alta Ionização)", "Noite (Baixa Ionização)"])
 
