@@ -32,7 +32,7 @@ st.markdown("""
 
 st.title("Simulador Físico de Propagação Ionosférica")
 st.markdown("Modelo contínuo com atenuação na Camada D, clima espacial e ajuste de densidade de plasma.")
-st.warning("🚧 **ATENÇÃO (Versão ALFA):** Este modelo matemático está em fase experimental e pode apresentar inconsistências. Utilize os resultados com precaução no planejamento da sua estação.")
+st.warning("🚧 **ATENÇÃO (Versão ALFA):** Esta ferramenta é bastante simplificada para facilitar o entendimento, está em fase experimental e pode apresentar inconsistências. Utilize os resultados com cautela.")
 
 # --- BARRA LATERAL ---
 st.sidebar.header("📚 Modelo Físico")
