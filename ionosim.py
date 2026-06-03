@@ -29,7 +29,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Simulador Físico de Propagação Ionosférica")
-st.markdown("Modelo contínuo com separação diurna das camadas F1 e F2, e correção de vácuo em HF para o período noturno.")
+st.markdown("Modelo contínuo com separação diurna das camadas F1 e F2, e limites físicos de contorno corrigidos.")
 
 # --- BARRA LATERAL ---
 st.sidebar.header("📚 Modelo Físico")
@@ -37,8 +37,8 @@ st.sidebar.markdown("""
 **Dinâmica das Camadas F1 e F2**
 Durante o dia, a intensa radiação solar ioniza fortemente a alta atmosfera, fazendo com que a camada F se divida em duas: **F1** (aprox. 180 km) e **F2** (aprox. 300 km). Sinais de HF interagem com ambas, dependendo da frequência. À noite, elas se fundem novamente em uma única camada F.
 
-**Propagação Noturna**
-Sem o Sol, as camadas D e E se recombinam rapidamente e "desaparecem". O sinal de rádio viaja em linha reta (vácuo virtual para HF) até atingir a camada F, que retém sua ionização por mais tempo.
+**Propagação Noturna (Linha de Visada/Vácuo)**
+Sem o Sol, as camadas D e E se recombinam rapidamente e "desaparecem". O sinal de rádio viaja em linha reta (vácuo virtual para HF) até atingir a base física da camada F, que retém sua ionização por mais tempo.
 """)
 st.sidebar.markdown("---")
 
@@ -47,9 +47,9 @@ col1, col2 = st.columns([1, 2.5])
 
 with col1:
     st.markdown("### Parâmetros de Transmissão")
-    freq = st.slider("Frequência de Operação (MHz)", 1.0, 30.0, 7.0, 0.5)
+    freq = st.slider("Frequência de Operação (MHz)", 1.0, 30.0, 2.0, 0.5)
     angle = st.slider("Ângulo de Elevação da Antena (Graus)", 10, 89, 16, 1)
-    cond = st.selectbox("Condição da Ionosfera", ["Dia (Alta Ionização)", "Noite (Baixa Ionização)"])
+    cond = st.selectbox("Condição da Ionosfera", ["Dia (Alta Ionização)", "Noite (Baixa Ionização)"], index=1)
 
     # Parâmetros Geométricos das Camadas (Altura h e Espessura w em km)
     h_E, w_E = 110.0, 20.0
@@ -82,36 +82,34 @@ dt = 0.5
 
 x_vals, y_vals = [x], [y]
 escapou = False
-atenuacao_D_dB = 0.0
-distancia_total = 0.0
 
 while y >= 0 and x <= 4500:
     # 1. Absorção da Camada D (60km a 90km)
     if 60 <= y <= 90 and fator_absorcao_D > 0:
-        atenuacao_D_dB += (fator_absorcao_D / (freq**2)) * dt
+        pass # Apenas visual no gráfico nesta versão de cálculo de trajetória
 
-    # 2. Somatório do Gradiente de Refração
+    # 2. Somatório do Gradiente de Refração (Aplicando Limites Físicos)
     dfp2_dy = 0.0
     
-    # Contribuição da Camada E (se existir)
-    if fc_E > 0.0:
+    # Restringimos a matemática da Gaussiana para não afetar altitudes irreais
+    if fc_E > 0.0 and 80 <= y <= 140:
         dfp2_dy += (fc_E**2) * (-2 * (y - h_E) / (w_E**2)) * np.exp(-((y - h_E) / w_E)**2)
         
-    # Contribuição da Camada F1 (se existir)
-    if fc_F1 > 0.0:
+    if fc_F1 > 0.0 and 140 <= y <= 220:
         dfp2_dy += (fc_F1**2) * (-2 * (y - h_F1) / (w_F1**2)) * np.exp(-((y - h_F1) / w_F1)**2)
         
-    # Contribuição da Camada F2 / F Noturna
-    if fc_F2 > 0.0:
+    # A base matemática da Camada F / F2 começará apenas em 220km
+    if fc_F2 > 0.0 and y >= 220:
         dfp2_dy += (fc_F2**2) * (-2 * (y - h_F2) / (w_F2**2)) * np.exp(-((y - h_F2) / w_F2)**2)
     
-    aceleracao_v = (1.0 / (2.0 * freq**2)) * dfp2_dy
-    vy -= aceleracao_v * dt
+    # Calcula a aceleração apenas se houver gradiente ativo na altitude atual
+    if dfp2_dy != 0.0:
+        aceleracao_v = (1.0 / (2.0 * freq**2)) * dfp2_dy
+        vy -= aceleracao_v * dt
     
     # 3. Atualização Cinemática
     x += vx * dt
     y += vy * dt
-    distancia_total += dt
 
     x_vals.append(x)
     y_vals.append(y)
@@ -132,11 +130,10 @@ with col2:
         ax.axhspan(90, 130, color='#f1c40f', alpha=0.2, label='Camada E')
         
     if fc_F1 > 0:
-        # Dia: Divisão clara entre F1 e F2
         ax.axhspan(150, 210, color='#e67e22', alpha=0.2, label='Camada F1')
         ax.axhspan(250, 350, color='#d35400', alpha=0.25, label='Camada F2 Principal')
     else:
-        # Noite: Apenas a camada F remanescente
+        # A faixa visual reflete onde a refração se torna mais severa
         ax.axhspan(250, 350, color='#d35400', alpha=0.25, label='Camada F (Noturna)')
     
     ax.axhline(0, color='#2c3e50', linestyle='-', linewidth=2)
@@ -167,9 +164,7 @@ with col2:
     ax.set_ylabel("Altitude (km)")
     ax.grid(True, linestyle=':', alpha=0.5)
     
-    # Legend position outside the main propagation path to avoid clutter
     ax.legend(loc='upper right', framealpha=0.9, fontsize=9)
-    
     st.pyplot(fig)
 
 # --- RODAPÉ OFICIAL ---
