@@ -55,7 +55,7 @@ col1, col2 = st.columns([1, 2.5])
 
 with col1:
     st.markdown("### Parâmetros de Transmissão")
-    freq = st.slider("Frequência de Operação (MHz)", 1.0, 54.0, 7.0, 0.5, help="Abrange de 160m (MF) até 6m (VHF)")
+    freq = st.slider("Frequência de Operação (MHz)", 1.0, 150.0, 7.0, 0.5, help="Abrange de 160m (MF) até 2m (VHF)")
     angle = st.slider("Ângulo de Elevação da Antena (Graus)", 10, 89, 13, 1)
     cond = st.selectbox("Condição da Ionosfera", ["Dia (Alta Ionização)", "Noite (Baixa Ionização)"])
 
