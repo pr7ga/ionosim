@@ -30,8 +30,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("Simulador Físico de Propagação Ionosférica")
-st.markdown("Modelo contínuo com atenuação na Camada D e ajuste de densidade de plasma por MUF dinâmica.")
+st.title("Simulador da Propagação Ionosférica (em desenvolvimento!!)")
+st.markdown("""
+Modelo contínuo com atenuação na Camada D e ajuste de densidade de plasma por MUF dinâmica. <br>
+<span style='color: #e74c3c; font-size: 0.9em; font-weight: bold;'>⚠️ VERSÃO ALFA: Pode conter inconsistências. Use com precaução.</span>
+""", unsafe_allow_html=True)
 
 # --- BARRA LATERAL ---
 st.sidebar.header("📚 Modelo Físico")
