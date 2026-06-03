@@ -29,19 +29,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Simulador Físico de Propagação Ionosférica")
-st.markdown("Modelo avançado com perfis Gaussianos de densidade de elétrons e absorção da Camada D.")
+st.markdown("Modelo contínuo com separação diurna das camadas F1 e F2, e correção de vácuo em HF para o período noturno.")
 
-# --- BARRA LATERAL: Fundamentos Teóricos ---
+# --- BARRA LATERAL ---
 st.sidebar.header("📚 Modelo Físico")
 st.sidebar.markdown("""
-**Densidade de Elétrons Contínua**
-A refração não ocorre abruptamente. Modelamos as camadas como distribuições Gaussianas, onde o raio é continuamente curvado pela derivada espacial do quadrado da frequência de plasma ($f_p^2$).
+**Dinâmica das Camadas F1 e F2**
+Durante o dia, a intensa radiação solar ioniza fortemente a alta atmosfera, fazendo com que a camada F se divida em duas: **F1** (aprox. 180 km) e **F2** (aprox. 300 km). Sinais de HF interagem com ambas, dependendo da frequência. À noite, elas se fundem novamente em uma única camada F.
 
-**A Camada D e a Absorção**
-Presente apenas durante o dia (60-90 km), a camada D possui alta pressão atmosférica. Os elétrons excitados pelas ondas de rádio colidem com moléculas neutras, dissipando a energia do sinal como calor. 
-A atenuação obedece à relação fundamental:
-$$L_{dB} \\propto \\frac{1}{f^2}$$
-*Ondas de frequências mais baixas (ex: 3.5 MHz) perdem muito mais energia na camada D do que ondas de frequências mais altas (ex: 28 MHz).*
+**Propagação Noturna**
+Sem o Sol, as camadas D e E se recombinam rapidamente e "desaparecem". O sinal de rádio viaja em linha reta (vácuo virtual para HF) até atingir a camada F, que retém sua ionização por mais tempo.
 """)
 st.sidebar.markdown("---")
 
@@ -51,96 +48,102 @@ col1, col2 = st.columns([1, 2.5])
 with col1:
     st.markdown("### Parâmetros de Transmissão")
     freq = st.slider("Frequência de Operação (MHz)", 1.0, 30.0, 7.0, 0.5)
-    angle = st.slider("Ângulo de Elevação da Antena (Graus)", 10, 89, 30, 1)
+    angle = st.slider("Ângulo de Elevação da Antena (Graus)", 10, 89, 16, 1)
     cond = st.selectbox("Condição da Ionosfera", ["Dia (Alta Ionização)", "Noite (Baixa Ionização)"])
 
-    # Parâmetros das Camadas (Altura h e Espessura w em km, Frequência Crítica fc em MHz)
-    h_D, w_D = 75.0, 15.0
+    # Parâmetros Geométricos das Camadas (Altura h e Espessura w em km)
     h_E, w_E = 110.0, 20.0
-    h_F, w_F = 300.0, 70.0
+    h_F1, w_F1 = 180.0, 30.0
+    h_F2, w_F2 = 300.0, 60.0
 
+    # Lógica de Ionização Diurna vs Noturna
     if cond == "Dia (Alta Ionização)":
         fc_E = 3.5
-        fc_F = 9.5
-        fator_absorcao_D = 15.0  # Fator multiplicador de perda na Camada D
+        fc_F1 = 5.5
+        fc_F2 = 9.5
+        fator_absorcao_D = 15.0
     else:
-        fc_E = 0.5  # Recombinação quase total
-        fc_F = 4.5
-        fator_absorcao_D = 0.0   # Camada D desaparece à noite
+        fc_E = 0.0    # Camada E desaparece
+        fc_F1 = 0.0   # Camada F1 funde-se com a F2
+        fc_F2 = 4.5   # Camada F remanescente
+        fator_absorcao_D = 0.0
 
     angle_rad = np.radians(angle)
-    muf_estimada = fc_F / np.sin(angle_rad)
+    muf_estimada = fc_F2 / np.sin(angle_rad)
 
     st.markdown("---")
-    st.metric(label="MUF Estimada (Aprox.)", value=f"{muf_estimada:.2f} MHz")
+    st.metric(label="MUF Estimada (F2)", value=f"{muf_estimada:.2f} MHz")
 
-# --- MOTOR DE SIMULAÇÃO (Integração Numérica Constante) ---
+# --- MOTOR DE SIMULAÇÃO (Integração Numérica) ---
 x, y = 0.0, 0.0
 vx = np.cos(angle_rad)
 vy = np.sin(angle_rad)
-dt = 0.5  # Resolução espacial da integração (km)
+dt = 0.5
 
 x_vals, y_vals = [x], [y]
 escapou = False
 atenuacao_D_dB = 0.0
-distancia_total_percorrida = 0.0
+distancia_total = 0.0
 
 while y >= 0 and x <= 4500:
     # 1. Absorção da Camada D (60km a 90km)
     if 60 <= y <= 90 and fator_absorcao_D > 0:
-        # A perda aumenta com a densidade da camada e o tempo gasto nela, caindo com f^2
         atenuacao_D_dB += (fator_absorcao_D / (freq**2)) * dt
 
-    # 2. Refração Contínua (Derivada do perfil de densidade - Lei de Snell diferencial)
-    # dfp2_dy representa o gradiente vertical do quadrado da frequência de plasma
-    dfp2_dy = (
-        (fc_E**2) * (-2 * (y - h_E) / (w_E**2)) * np.exp(-((y - h_E) / w_E)**2) +
-        (fc_F**2) * (-2 * (y - h_F) / (w_F**2)) * np.exp(-((y - h_F) / w_F)**2)
-    )
+    # 2. Somatório do Gradiente de Refração
+    dfp2_dy = 0.0
     
-    # A aceleração de refração empurra a onda baseada no gradiente de plasma
+    # Contribuição da Camada E (se existir)
+    if fc_E > 0.0:
+        dfp2_dy += (fc_E**2) * (-2 * (y - h_E) / (w_E**2)) * np.exp(-((y - h_E) / w_E)**2)
+        
+    # Contribuição da Camada F1 (se existir)
+    if fc_F1 > 0.0:
+        dfp2_dy += (fc_F1**2) * (-2 * (y - h_F1) / (w_F1**2)) * np.exp(-((y - h_F1) / w_F1)**2)
+        
+    # Contribuição da Camada F2 / F Noturna
+    if fc_F2 > 0.0:
+        dfp2_dy += (fc_F2**2) * (-2 * (y - h_F2) / (w_F2**2)) * np.exp(-((y - h_F2) / w_F2)**2)
+    
     aceleracao_v = (1.0 / (2.0 * freq**2)) * dfp2_dy
     vy -= aceleracao_v * dt
     
     # 3. Atualização Cinemática
     x += vx * dt
     y += vy * dt
-    distancia_total_percorrida += dt
+    distancia_total += dt
 
     x_vals.append(x)
     y_vals.append(y)
 
-    # Condição de escape (ultrapassou o pico da camada F significativamente)
     if y > 450:
         escapou = True
         break
-
-# --- CÁLCULO DE PERDAS NO ENLACE (Link Budget Básico) ---
-if not escapou:
-    # Free Space Path Loss (FSPL) simplificado
-    fspl_dB = 32.44 + 20 * np.log10(freq) + 20 * np.log10(distancia_total_percorrida)
-    perda_total = fspl_dB + atenuacao_D_dB
-else:
-    perda_total = float('inf')
 
 # --- RENDERIZAÇÃO DO GRÁFICO ---
 with col2:
     fig, ax = plt.subplots(figsize=(11, 5.5))
     
-    # Desenho das Camadas Ionosféricas (Gradientes Visuais)
+    # Desenho visual rigoroso das camadas ativas
     if fator_absorcao_D > 0:
-        ax.axhspan(60, 90, color='#7f8c8d', alpha=0.3, label='Camada D (Absorção)')
-    if fc_E > 1.0:
-        ax.axhspan(90, 130, color='#f4d03f', alpha=0.2, label='Camada E')
-    
-    # A camada F é mais larga e difusa
-    ax.axhspan(220, 380, color='#eb984e', alpha=0.25, label='Camada F (Refração Principal)')
+        ax.axhspan(60, 90, color='#7f8c8d', alpha=0.25, label='Camada D')
+        
+    if fc_E > 0:
+        ax.axhspan(90, 130, color='#f1c40f', alpha=0.2, label='Camada E')
+        
+    if fc_F1 > 0:
+        # Dia: Divisão clara entre F1 e F2
+        ax.axhspan(150, 210, color='#e67e22', alpha=0.2, label='Camada F1')
+        ax.axhspan(250, 350, color='#d35400', alpha=0.25, label='Camada F2 Principal')
+    else:
+        # Noite: Apenas a camada F remanescente
+        ax.axhspan(250, 350, color='#d35400', alpha=0.25, label='Camada F (Noturna)')
     
     ax.axhline(0, color='#2c3e50', linestyle='-', linewidth=2)
 
     cor_linha = '#e74c3c' if not escapou else '#95a5a6'
     estilo_linha = '-' if not escapou else '-.'
-    ax.plot(x_vals, y_vals, color=cor_linha, linestyle=estilo_linha, linewidth=2, label=f'Onda ({freq} MHz)')
+    ax.plot(x_vals, y_vals, color=cor_linha, linestyle=estilo_linha, linewidth=2.5, label=f'Onda ({freq} MHz)')
     ax.plot(0, 0, marker='^', color='#2c3e50', markersize=10, label="Tx")
 
     if not escapou:
@@ -155,7 +158,7 @@ with col2:
         )
         ax.axvspan(0, distancia_salto, ymax=0.03, color='#c0392b', alpha=0.1)
     else:
-        ax.text(x_vals[-1]*0.8, 410, 'Onda Perfurou a Ionosfera', color='#7f8c8d', fontsize=10, rotation=angle*0.5)
+        ax.text(x_vals[-1]*0.8, 410, 'Escape Espacial', color='#7f8c8d', fontsize=10, rotation=angle*0.5)
 
     limite_x = max(1600, min(x_vals[-1] + 200 if not escapou else 1600, 4500))
     ax.set_xlim(0, limite_x)
@@ -163,22 +166,11 @@ with col2:
     ax.set_xlabel("Distância de Solo (km)")
     ax.set_ylabel("Altitude (km)")
     ax.grid(True, linestyle=':', alpha=0.5)
-    ax.legend(loc='upper right', framealpha=0.9)
+    
+    # Legend position outside the main propagation path to avoid clutter
+    ax.legend(loc='upper right', framealpha=0.9, fontsize=9)
     
     st.pyplot(fig)
-
-    # Painel de Resultados Técnicos
-    if not escapou:
-        st.success(f"**Enlace Estabelecido!** O sinal atingiu o solo a **{distancia_salto:.0f} km**.")
-        st.info(f"**Balanço do Enlace (Estimativa):**\n"
-                f"* Atenuação por Absorção (Camada D): **{atenuacao_D_dB:.1f} dB**\n"
-                f"* Atenuação de Espaço Livre (FSPL): **{fspl_dB:.1f} dB**\n"
-                f"* Perda Total de Percurso: **{perda_total:.1f} dB**")
-        
-        if atenuacao_D_dB > 30:
-            st.warning("⚠️ **Alta Atenuação na Camada D!** Embora a trajetória retorne à Terra, o sinal sofreu absorção extrema. Na prática da estação, este sinal pode estar inaudível abaixo do ruído de fundo (QRM/QRN).")
-    else:
-        st.error("**Falha no Enlace:** A frequência de operação excede o limite refrativo do gradiente de plasma para este ângulo de irradiação.")
 
 # --- RODAPÉ OFICIAL ---
 st.markdown(
