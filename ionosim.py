@@ -30,23 +30,21 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("Simulador da Propagação Ionosférica (em desenvolvimento!!)")
-st.markdown("""
-Modelo contínuo com atenuação na Camada D e ajuste de densidade de plasma por MUF dinâmica. <br>
-<span style='color: #e74c3c; font-size: 0.9em; font-weight: bold;'>⚠️ VERSÃO ALFA: Pode conter inconsistências. Use com precaução.</span>
-""", unsafe_allow_html=True)
+st.title("Simulador Físico de Propagação Ionosférica")
+st.markdown("Modelo contínuo com atenuação na Camada D, clima espacial e ajuste de densidade de plasma.")
+st.warning("🚧 **ATENÇÃO (Versão ALFA):** Este modelo matemático está em fase experimental e pode apresentar inconsistências. Utilize os resultados com precaução no planejamento da sua estação.")
 
 # --- BARRA LATERAL ---
 st.sidebar.header("📚 Modelo Físico")
 st.sidebar.markdown("""
-**A Camada D e o "Blackout"**
-A atenuação diurna da camada D (60-90 km) é inversamente proporcional ao quadrado da frequência. Sinais de baixa frequência (ex: 160m e 80m) perdem enorme quantidade de energia. Quando a atenuação é total, o sinal desaparece antes de ser refratado.
+**VHF e a Banda de 2 Metros (150 MHz)**
+Ao utilizar frequências muito elevadas, o sinal possui energia cinética suficiente para ignorar o gradiente de elétrons da ionosfera. Sinais de 144 MHz atravessam a atmosfera direto para o espaço, servindo para contatos locais em linha de visada ou via satélite.
 
-**Camadas F1 e F2**
-Durante o dia, a intensa radiação divide a camada F em F1 e F2. À noite, elas se fundem e a camada D se dissipa.
-
-**Modo de MUF Informada**
-Ao invés de usar os valores padrão de densidade da ionosfera, você pode inserir a MUF observada em dados reais (ionossondas). O simulador fará a retroengenharia do gradiente de plasma, ajustando as frequências críticas ($f_c$) de todas as camadas para que o modelo físico reflita exatamente as condições do momento.
+**Clima Espacial e Manchas Solares**
+O ciclo solar de 11 anos dita a propagação em HF:
+* **Alta Atividade:** Muitas manchas solares geram forte radiação EUV, enriquecendo a camada F2 e aumentando a MUF. Bandas como 10m abrem globalmente.
+* **Mínimo Solar:** Ionosfera fraca, MUF baixa. Longas distâncias ficam restritas a bandas baixas (40m, 80m).
+* **Tempestade Solar (Blackout):** Explosões de Raios-X (Flares) atingem a Terra em minutos, super-ionizando a Camada D no lado diurno e absorvendo completamente os sinais de HF.
 """)
 st.sidebar.markdown("---")
 
@@ -55,15 +53,28 @@ col1, col2 = st.columns([1, 2.5])
 
 with col1:
     st.markdown("### Parâmetros de Transmissão")
+    # Limite superior ampliado para 150 MHz (cobre a banda de 2m)
     freq = st.slider("Frequência de Operação (MHz)", 1.0, 150.0, 7.0, 0.5, help="Abrange de 160m (MF) até 2m (VHF)")
-    angle = st.slider("Ângulo de Elevação da Antena (Graus)", 10, 89, 13, 1)
+    angle = st.slider("Ângulo de Elevação da Antena (Graus)", 10, 89, 15, 1)
+    
+    st.markdown("### Ambiente e Clima Espacial")
     cond = st.selectbox("Condição da Ionosfera", ["Dia (Alta Ionização)", "Noite (Baixa Ionização)"])
+    
+    atividade_solar = st.selectbox(
+        "Atividade Solar (Ciclo / Eventos)",
+        [
+            "Normal (Modelo Atual)", 
+            "Alta Atividade (Pico do Ciclo / Muitas Manchas)", 
+            "Baixa Atividade (Mínimo Solar / Zero Manchas)", 
+            "Tempestade Solar (Blackout de Rádio)"
+        ]
+    )
 
     h_E, w_E = 110.0, 20.0
     h_F1, w_F1 = 180.0, 30.0
     h_F2, w_F2 = 300.0, 60.0
 
-    # Valores base da física do modelo
+    # Valores base da física do modelo padrão (Normal)
     if cond == "Dia (Alta Ionização)":
         fc_E_base = 3.5
         fc_F1_base = 5.5
@@ -74,6 +85,22 @@ with col1:
         fc_F1_base = 0.0
         fc_F2_base = 4.5
         fator_absorcao_D = 0.0
+
+    # Aplicação dos modificadores do Clima Espacial
+    if atividade_solar == "Alta Atividade (Pico do Ciclo / Muitas Manchas)":
+        fc_E_base *= 1.2
+        fc_F1_base *= 1.3
+        fc_F2_base *= 1.6  # MUF dispara
+    elif atividade_solar == "Baixa Atividade (Mínimo Solar / Zero Manchas)":
+        fc_E_base *= 0.8
+        fc_F1_base *= 0.8
+        fc_F2_base *= 0.6  # MUF despenca
+    elif atividade_solar == "Tempestade Solar (Blackout de Rádio)":
+        if cond == "Dia (Alta Ionização)":
+            fator_absorcao_D *= 40.0  # Atenuação cataclísmica por Flare de Raios-X
+        else:
+            fator_absorcao_D = 15.0   # Alguma absorção noturna residual/auroral
+        fc_F2_base *= 0.85 # Leve depressão na camada F típica de tempestades geomagnéticas
 
     angle_rad = np.radians(angle)
     muf_base = fc_F2_base / np.sin(angle_rad)
@@ -88,19 +115,15 @@ with col1:
         muf_estimada = muf_base
         st.metric(label="MUF Resultante (F2)", value=f"{muf_estimada:.2f} MHz")
     else:
-        # Modo Personalizado
-        muf_usuario = st.number_input("Informe a MUF atual (MHz):", min_value=1.0, max_value=100.0, value=round(muf_base, 1), step=0.5)
+        muf_usuario = st.number_input("Informe a MUF atual (MHz):", min_value=1.0, max_value=200.0, value=round(muf_base, 1), step=0.5)
         muf_estimada = muf_usuario
+        fator_escala = muf_usuario / max(0.1, muf_base) # Previne divisão por zero
         
-        # Fator de escala: O quanto a ionosfera real está mais forte/fraca que o modelo teórico
-        fator_escala = muf_usuario / muf_base
-        
-        # Redimensionando a ionosfera
         fc_E = fc_E_base * fator_escala
         fc_F1 = fc_F1_base * fator_escala
         fc_F2 = fc_F2_base * fator_escala
         
-        st.info(f"O modelo de plasma foi redimensionado. A frequência crítica do pico da Camada F2 ($f_c$) foi ajustada internamente para **{fc_F2:.2f} MHz** para obedecer à sua MUF informada.")
+        st.info(f"O modelo de plasma foi redimensionado internamente para obedecer à sua MUF informada.")
 
 # --- MOTOR DE SIMULAÇÃO (Integração Numérica) ---
 x, y = 0.0, 0.0
@@ -156,9 +179,11 @@ while y >= 0 and x <= 4500:
 with col2:
     fig, ax = plt.subplots(figsize=(11, 5.5))
     
-    # Camadas
+    # Renderização Condicional da Camada D (Aumenta opacidade durante tempestades)
     if fator_absorcao_D > 0:
-        ax.axhspan(60, 90, color='#7f8c8d', alpha=0.25, label='Camada D (Absorção)')
+        opacidade_D = 0.5 if atividade_solar == "Tempestade Solar (Blackout de Rádio)" else 0.25
+        ax.axhspan(60, 90, color='#7f8c8d', alpha=opacidade_D, label='Camada D (Absorção)')
+        
     if fc_E > 0:
         ax.axhspan(90, 130, color='#f1c40f', alpha=0.2, label='Camada E')
     if fc_F1 > 0:
@@ -170,7 +195,7 @@ with col2:
     ax.axhline(0, color='#2c3e50', linestyle='-', linewidth=2)
     ax.plot(0, 0, marker='^', color='#2c3e50', markersize=10, label="Tx")
 
-    # Linha com opacidade dinâmica para absorção
+    # Linha com opacidade dinâmica
     points = np.array([x_vals, y_vals]).T.reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
@@ -185,8 +210,12 @@ with col2:
 
     if absorvido:
         ax.plot(x_vals[-1], y_vals[-1], marker='X', color='#c0392b', markersize=8)
-        ax.text(x_vals[-1]*1.05, y_vals[-1], 'Totalmente Absorvido', color='#c0392b', fontsize=10, fontweight='bold')
-        st.error(f"⚠️ **Blackout por Absorção:** O sinal foi dissipado na Camada D antes de ser refletido. Atenuação superou {LIMITE_ABSORCAO_DB:.0f} dB.")
+        ax.text(x_vals[-1]*1.05, y_vals[-1], 'Sinal Absorvido', color='#c0392b', fontsize=10, fontweight='bold')
+        
+        if atividade_solar == "Tempestade Solar (Blackout de Rádio)":
+            st.error(f"☢️ **BLACKOUT DE RÁDIO:** Uma tempestade solar super-ionizou a Camada D. O sinal foi violentamente absorvido em poucos quilômetros de altitude. Nenhuma propagação em HF possível.")
+        else:
+            st.error(f"⚠️ **Sinal Dissipado:** O sinal perdeu toda a energia na Camada D antes de ser refletido. Atenuação superou {LIMITE_ABSORCAO_DB:.0f} dB.")
     
     elif not escapou:
         distancia_salto = x_vals[-1]
@@ -202,17 +231,17 @@ with col2:
         
     else:
         ax.text(x_vals[-1] - 40, 415, 'Escape Espacial', color='#7f8c8d', fontsize=10, rotation=angle*0.5, ha='right', va='center')
-        st.warning("ℹ️ **O sinal escapou.** Frequência acima da MUF para o ângulo atual.")
+        if freq >= 144.0:
+            st.info("🛰️ **Comportamento VHF (Linha de Visada):** A 144+ MHz a onda possui energia excessiva para ser curvada pela ionosfera. O sinal seguiu reto para o espaço.")
+        else:
+            st.warning("ℹ️ **O sinal escapou.** Frequência acima da MUF para o ângulo e atividade solar atuais.")
 
-    # --- ESCALA DINÂMICA DO EIXO X ---
+    # Escala Dinâmica do Eixo X
     if not escapou and not absorvido:
-        # Dá uma margem de 15% após o receptor. Garante no mínimo 150 km para não colapsar o gráfico em NVIS.
         limite_x = max(150.0, x_vals[-1] * 1.15)
     else:
-        # Se escapou ou sumiu, adiciona 250 km de margem fixa além da última posição.
         limite_x = max(150.0, x_vals[-1] + 250.0)
 
-    # Limite rígido máximo para não processar gráficos infinitos
     limite_x = min(limite_x, 4500.0)
 
     ax.set_xlim(0, limite_x)
